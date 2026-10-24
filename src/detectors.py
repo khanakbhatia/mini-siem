@@ -1,41 +1,41 @@
+"""Small, explainable rule for repeated failed SSH logins."""
 
 from collections import defaultdict, deque
-import time
 
 
 class BruteForceDetector:
     def __init__(self, window_seconds=60, threshold=5):
+        if window_seconds <= 0 or threshold <= 0:
+            raise ValueError("window_seconds and threshold must be positive")
         self.window = window_seconds
         self.threshold = threshold
-        self.failed = defaultdict(deque) # ip -> deque([timestamp_seconds])
-
+        self.failed = defaultdict(deque)
+        self.active = set()
 
     def add_event(self, event):
-    # event must have 'type' and 'timestamp' and 'ip'
-        if event.get('type') != 'auth_fail' or not event.get('ip'):
+        if event.get("type") != "auth_fail" or not event.get("ip"):
             return None
 
+        ip = event["ip"]
+        ts = event["timestamp"].timestamp()
+        attempts = self.failed[ip]
+        # Input is expected in chronological order, as with a tailed log.
+        while attempts and attempts[0] < ts - self.window:
+            attempts.popleft()
+        attempts.append(ts)
 
-        ip = event['ip']
-        ts = event['timestamp'].timestamp() # seconds as float
-        dq = self.failed[ip]
-        dq.append(ts)
+        if len(attempts) < self.threshold:
+            self.active.discard(ip)
+            return None
+        if ip in self.active:
+            return None  # One alert per continuous burst, not one per attempt.
 
-
-        cutoff = ts - self.window
-        # remove old timestamps
-        while dq and dq[0] < cutoff:
-            dq.popleft()
-
-
-# Trigger when count strictly greater than threshold.
-# Adjust to >= if you want threshold to be inclusive.
-        if len(dq) > self.threshold:
-            return {
-                'alert_type': 'brute_force',
-                'ip': ip,
-                'count': len(dq),
-                'window': self.window,
-                'first_seen': dq[0],
-                'last_seen': dq[-1]}
-        return None
+        self.active.add(ip)
+        return {
+            "alert_type": "brute_force",
+            "ip": ip,
+            "count": len(attempts),
+            "window": self.window,
+            "first_seen": attempts[0],
+            "last_seen": attempts[-1],
+        }
