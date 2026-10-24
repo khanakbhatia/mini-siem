@@ -1,34 +1,66 @@
+"""Tail a syslog file, or replay it once for a reproducible demo."""
+
+import argparse
 import time
-from parser import parse_syslog_line
+from pathlib import Path
+
 from detectors import BruteForceDetector
-from storage import Storage
+from parser import parse_syslog_line
+from storage import DEFAULT_DB, Storage
 
-LOGFILE = '../data/sample_auth.log'
+DEFAULT_LOG = Path(__file__).resolve().parents[1] / "data" / "sample_auth.log"
 
-def follow(path):
-    with open(path, 'r') as f:
-        f.seek(0, 2) # go to end
+
+def follow(path, from_start=False, poll_interval=0.3):
+    with open(path, encoding="utf-8") as source:
+        if not from_start:
+            source.seek(0, 2)
         while True:
-            line = f.readline()
-            if not line:
-                time.sleep(0.3)
-                continue
-            yield line
+            line = source.readline()
+            if line:
+                yield line
+            else:
+                if path.stat().st_size < source.tell():
+                    source.seek(0)  # Handle truncation of the same file.
+                time.sleep(poll_interval)
 
 
-def run():
-    detector = BruteForceDetector(window_seconds=60, threshold=5)
-    store = Storage()
-
-    for line in follow(LOGFILE):
-        ev = parse_syslog_line(line)
-        if not ev:
+def process_lines(lines, store, detector, year=None):
+    count = 0
+    for line in lines:
+        event = parse_syslog_line(line, year=year)
+        if event is None:
             continue
-        alert = detector.add_event(ev)
+        alert = detector.add_event(event)
         if alert:
-            print(f"ALERT: {alert}")
-            store.insert_alert(alert['alert_type'], alert['ip'], alert)
+            store.insert_alert(alert["alert_type"], alert["ip"], alert)
+            print(f"ALERT: {alert}", flush=True)
+            count += 1
+    return count
 
 
-if __name__ == '__main__':
+def run(argv=None):
+    cli = argparse.ArgumentParser(description=__doc__)
+    cli.add_argument("--log", type=Path, default=DEFAULT_LOG)
+    cli.add_argument("--db", type=Path, default=DEFAULT_DB)
+    cli.add_argument("--from-start", action="store_true", help="read existing lines before tailing")
+    cli.add_argument("--once", action="store_true", help="process existing lines then exit")
+    cli.add_argument("--year", type=int, help="year for syslog lines (which lack a year)")
+    args = cli.parse_args(argv)
+    detector = BruteForceDetector(window_seconds=60, threshold=5)
+    store = Storage(args.db)
+    try:
+        if args.once:
+            with args.log.open(encoding="utf-8") as source:
+                print(f"Processed log; created {process_lines(source, store, detector, args.year)} alert(s).")
+        else:
+            print(f"Monitoring {args.log} (Ctrl+C to stop)", flush=True)
+            process_lines(follow(args.log, args.from_start), store, detector, args.year)
+    except KeyboardInterrupt:
+        print("Stopped.")
+    finally:
+        store.close()
+
+
+if __name__ == "__main__":
     run()

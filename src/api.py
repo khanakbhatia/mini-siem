@@ -37,10 +37,10 @@ TEMPLATE = """
 </head>
 <body>
   <h1>Mini SIEM Dashboard</h1>
-  <p class="subtitle">Real-time security alert monitor</p>
+  <p class="subtitle">Recent SSH authentication alerts · refreshes every 10 seconds</p>
 
   <div class="stats">
-    <div class="stat"><div class="label">Total Alerts</div><div class="value" id="total">—</div></div>
+    <div class="stat"><div class="label">Recent Alerts (up to 50)</div><div class="value" id="total">—</div></div>
     <div class="stat"><div class="label">Unique IPs</div><div class="value" id="unique-ips">—</div></div>
     <div class="stat"><div class="label">Brute Force</div><div class="value" id="brute-count">—</div></div>
     <div class="stat"><div class="label">Last Alert</div><div class="value" id="last-alert" style="font-size:13px;padding-top:6px">—</div></div>
@@ -70,24 +70,31 @@ TEMPLATE = """
   </div>
 
   <script>
+    let typeChart, ipChart;
     async function load() {
-      const res = await fetch('/api/alerts');
-      const data = await res.json();
+      let data;
+      try {
+        const res = await fetch('/api/alerts');
+        if (!res.ok) throw new Error('Could not load alerts');
+        data = await res.json();
+      } catch (error) {
+        document.getElementById('total').textContent = 'Unavailable';
+        return;
+      }
 
       // Stats
       document.getElementById('total').textContent = data.length;
       const ips = [...new Set(data.map(d => d.ip))];
       document.getElementById('unique-ips').textContent = ips.length;
       document.getElementById('brute-count').textContent = data.filter(d => d.type === 'brute_force').length;
-      if (data.length > 0) {
-        const last = new Date(data[0].ts);
-        document.getElementById('last-alert').textContent = last.toLocaleTimeString();
-      }
+      document.getElementById('last-alert').textContent =
+        data.length ? new Date(data[0].ts).toLocaleString() : '—';
 
       // Type chart
       const typeCounts = {};
       data.forEach(d => { typeCounts[d.type] = (typeCounts[d.type] || 0) + 1; });
-      new Chart(document.getElementById('typeChart'), {
+      if (typeChart) typeChart.destroy();
+      typeChart = new Chart(document.getElementById('typeChart'), {
         type: 'bar',
         data: {
           labels: Object.keys(typeCounts),
@@ -104,7 +111,8 @@ TEMPLATE = """
       const ipCounts = {};
       data.forEach(d => { ipCounts[d.ip] = (ipCounts[d.ip] || 0) + 1; });
       const topIPs = Object.entries(ipCounts).sort((a,b) => b[1]-a[1]).slice(0,5);
-      new Chart(document.getElementById('ipChart'), {
+      if (ipChart) ipChart.destroy();
+      ipChart = new Chart(document.getElementById('ipChart'), {
         type: 'bar',
         data: {
           labels: topIPs.map(x => x[0]),
@@ -119,14 +127,17 @@ TEMPLATE = """
 
       // Table
       const tbody = document.getElementById('alert-tbody');
+      tbody.replaceChildren();
       data.slice(0, 20).forEach(d => {
         const time = new Date(d.ts).toLocaleTimeString();
-        tbody.innerHTML += `<tr>
-          <td>${time}</td>
-          <td><span class="badge ${d.type}">${d.type}</span></td>
-          <td>${d.ip}</td>
-          <td style="color:#6b6b8a;font-size:12px">${d.details.slice(0,80)}...</td>
-        </tr>`;
+        const row = tbody.insertRow();
+        const badge = document.createElement('span');
+        badge.className = 'badge ' + (d.type === 'brute_force' ? 'brute_force' : 'other');
+        badge.textContent = d.type;
+        row.insertCell().textContent = time;
+        row.insertCell().appendChild(badge);
+        row.insertCell().textContent = d.ip;
+        row.insertCell().textContent = d.details.slice(0,80);
       });
     }
 
@@ -149,4 +160,4 @@ def alerts():
 
 
 if __name__ == '__main__':
-    app.run(debug=True, port=5001)
+    app.run(host='127.0.0.1', debug=False, port=5001)
