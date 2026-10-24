@@ -1,0 +1,6 @@
+{
+  "192.0.2.23": {
+    "confidence": 75,
+    "reason": "Simulated adversary address in training scenario; TEST-NET documentation IP, not a real reputation finding"
+  }
+}
