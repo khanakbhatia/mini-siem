@@ -1,0 +1,9 @@
+{"timestamp":"2026-10-24T09:00:00Z","type":"auth_success","ip":"198.51.100.9","username":"alice","host":"demo-host","source":"demo-auth","simulated":true}
+{"timestamp":"2026-10-24T09:00:01Z","type":"auth_fail","ip":"192.0.2.23","username":"admin","host":"demo-host","source":"demo-auth","simulated":true}
+{"timestamp":"2026-10-24T09:00:05Z","type":"auth_fail","ip":"192.0.2.23","username":"admin","host":"demo-host","source":"demo-auth","simulated":true}
+{"timestamp":"2026-10-24T09:00:09Z","type":"auth_fail","ip":"192.0.2.23","username":"admin","host":"demo-host","source":"demo-auth","simulated":true}
+{"timestamp":"2026-10-24T09:00:13Z","type":"auth_fail","ip":"192.0.2.23","username":"admin","host":"demo-host","source":"demo-auth","simulated":true}
+{"timestamp":"2026-10-24T09:00:17Z","type":"auth_fail","ip":"192.0.2.23","username":"admin","host":"demo-host","source":"demo-auth","simulated":true}
+{"timestamp":"2026-10-24T09:00:22Z","type":"auth_success","ip":"192.0.2.23","username":"admin","host":"demo-host","source":"demo-auth","simulated":true}
+{"timestamp":"2026-10-24T09:01:00Z","type":"web_request","ip":"198.51.100.30","path":"/products?id=1%20UNION%20SELECT%20password","source":"demo-web","simulated":true}
+{"timestamp":"2026-10-24T09:02:00Z","type":"web_request","ip":"198.51.100.30","path":"/products?id=1","source":"demo-web","simulated":true}

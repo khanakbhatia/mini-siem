@@ -5,7 +5,8 @@ import time
 from pathlib import Path
 
 from detectors import BruteForceDetector
-from parser import parse_syslog_line
+from parser import parse_line
+from intel import LocalIntel
 from storage import DEFAULT_DB, Storage
 
 DEFAULT_LOG = Path(__file__).resolve().parents[1] / "data" / "sample_auth.log"
@@ -27,13 +28,25 @@ def follow(path, from_start=False, poll_interval=0.3):
 
 def process_lines(lines, store, detector, year=None):
     count = 0
+    intel = LocalIntel()
     for line in lines:
-        event = parse_syslog_line(line, year=year)
+        event = parse_line(line, year=year)
         if event is None:
             continue
+        event['enrichment'] = intel.lookup(event.get('ip'))
+        event_id = store.insert_event(event)
+        if event_id is None:
+            continue  # Idempotent replay of identical source/raw record.
         alert = detector.add_event(event)
         if alert:
-            store.insert_alert(alert["alert_type"], alert["ip"], alert)
+            evidence_ids = []
+            if alert['alert_type'] in {'brute_force', 'failure_then_success'}:
+                from datetime import timedelta
+                start = (event['timestamp'] - timedelta(seconds=detector.window)).isoformat()
+                evidence_ids = [r['id'] for r in store.conn.execute(
+                    "SELECT id FROM events WHERE ip=? AND type='auth_fail' AND ts>=? AND ts<=? ORDER BY id",
+                    (event['ip'], start, event['timestamp'].isoformat()))]
+            store.add_detection(alert, event, event_id, evidence_ids)
             print(f"ALERT: {alert}", flush=True)
             count += 1
     return count
