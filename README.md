@@ -1,10 +1,10 @@
-# Mini SIEM — local investigation lab
+# Mini SIEM — evidence-driven local investigation lab
 
-A small security event pipeline for an interview demonstration. It reads SSH syslog or JSON-line telemetry, normalizes and stores events in SQLite, evaluates deterministic rules, attaches **simulated local** IOC context, and groups related alerts into investigable incidents. It is a learning product, not a production SIEM.
+A compact security event pipeline for learning and interview demonstration. It ingests SSH syslog and JSON lines, stores normalized and raw events in SQLite, evaluates deterministic detection rules, adds IOC context, and links supporting evidence to incidents. The default demo is offline and fully simulated. This is not a production SIEM.
 
-## Run the deterministic demo
+## Quick start
 
-Python 3.10+ is required. From the repository root:
+Python 3.10+:
 
 ```bash
 python -m venv .venv
@@ -15,50 +15,54 @@ python src/main.py --once --log data/demo.jsonl --db data/alerts.db
 python src/api.py
 ```
 
-Open http://127.0.0.1:5001. The demo fixture contains nine **simulated** records, yielding three alerts and two incidents in an empty database. A replay of identical lines yields zero new records or alerts. The dashboard uses `data/alerts.db` by default. For another database, set `SIEM_DB` before starting the API. To run the original SSH sample instead, use `python src/main.py --once --year 2026`. For live tailing, use `python src/main.py --log PATH` (starts at end) or add `--from-start`.
+Open http://127.0.0.1:5001. In a fresh database the **14 simulated records** produce **four alerts and three incidents**: authentication burst, related successful login, suspicious web request, and distinct-port activity. Six events match the simulated local IOC; this is an event count, not six different indicators. Re-running the fixture adds zero events or alerts. Use a new database path and set `SIEM_DB` for the API if you want a clean first run. Run tests with `python -m unittest discover -s tests -v`.
 
-Run tests: `python -m unittest discover -s tests -v`.
+For the original SSH sample: `python src/main.py --once --year 2026`. For live monitoring: `python src/main.py --log PATH`; it starts at end on first launch and resumes its stored byte offset thereafter. `--from-start` processes existing lines, with duplicates skipped. The monitor detects same-path truncation and inode rotation. It checkpoints after each complete line and rebuilds in-memory rule windows from stored events on restart.
 
 ## Architecture
 
 ```mermaid
 flowchart TD
     A[SSH syslog or JSON lines] --> B[parser.py: validate and normalize UTC]
-    B --> C[storage.py: events with unique fingerprint]
-    C --> D[detectors.py: window and pattern rules]
-    D --> E[intel.py: simulated local IOC lookup]
-    E --> F[storage.py: alerts, evidence, incidents]
-    F --> G[api.py: investigation console and JSON API]
+    B --> C[storage.py: persist event and deduplicate]
+    C --> D[intel.py: local or opt-in live lookup]
+    D --> E[detectors.py: timed and pattern rules]
+    E --> F[storage.py: alert, evidence, incident]
+    F --> G[api.py: filtered events and investigation]
 ```
 
-`main.py` orchestrates ingestion and enrichment before detection; the diagram presents the logical stages. Every accepted event is stored, including benign events. The normalized fields include timestamp, source, type, IP, username, host, raw event, and a simulated flag. JSON network records can carry a destination port; web records carry a path. SSH syslog has no year or zone; `--year` supplies the year and the parser **assumes UTC**. JSON timestamps require an explicit timezone and are converted to UTC. Unsupported/malformed lines are skipped. The fingerprint is SHA-256 of source and raw line, so exact replays are ignored; identical genuine lines may also be collapsed.
+`main.py` coordinates these steps. SSH syslog lacks year and timezone: the supplied/default year is used and UTC is assumed. JSON timestamps must have a timezone. Supported JSON `type` values are `auth_fail`, `auth_success`, `web_request`, and `network_connection`. Relevant searchable fields include source IP, type, username, host, source, web path, HTTP status, destination IP/port and connection outcome. Original input is preserved in `raw_event`. The unique file-record identity includes path, device/inode, byte offset and line digest; arbitrary line streams use a source-plus-raw digest. Identical lines at distinct offsets are retained, while file replays are idempotent.
 
-## Detection rules and evidence
+SQLite tables: `events`, `alerts`, `alert_evidence`, `incidents`, `incident_alerts`, `ingest_offsets`, and `incident_actions`. Existing databases receive additive columns on startup. The rule state is reconstructed from stored events without creating new alerts; this is a simple O(total events) recovery strategy suited to a small local database.
 
-| Rule | Required telemetry and logic | ATT&CK | False-positive concern |
+## Detection and correlation
+
+| Rule | Logic | ATT&CK interpretation | Limit |
 | --- | --- | --- | --- |
-| AUTH-001 | Five SSH/JSON auth failures from one IP within 60 seconds; one alert per burst | [T1110](https://attack.mitre.org/techniques/T1110/) | Shared IPs, user errors |
-| AUTH-002 | Success from an IP with five recent failures in 60 seconds | [T1110](https://attack.mitre.org/techniques/T1110/) context | The successful user may differ; investigate rather than assume compromise |
-| WEB-001 | Decoded request path matches selected SQL injection or traversal strings | [T1190](https://attack.mitre.org/techniques/T1190/) hypothesis | Scanners and benign strings; no evidence of exploitation |
-| NET-001 | Five distinct destination ports attempted by one IP within 60 seconds | None | Legitimate monitoring; no connection outcome supplied |
+| AUTH-001 | Five failures from the same IP and host in 60 seconds | [T1110](https://attack.mitre.org/techniques/T1110/) | Shared sources and legitimate errors |
+| AUTH-002 | Success from that IP and host after five recent failures; if usernames exist, the account must match | [T1110](https://attack.mitre.org/techniques/T1110/) context | A success does not prove account takeover |
+| WEB-001 | Decoded path matches selected traversal or SQL-injection-like strings | [T1190](https://attack.mitre.org/techniques/T1190/) hypothesis | HTTP status is shown, but does not establish exploitation |
+| NET-001 | Five distinct ports to the same destination IP from one source in 60 seconds | No mapping claimed | Connection outcome is recorded where supplied; benign scans exist |
 
-Threshold and window are constructor parameters of `BruteForceDetector`; the CLI uses five and 60 seconds. Alerts record rule ID, triggering timestamp, explanation, heuristic score, source IP and evidence event IDs via `alert_evidence`. An incident groups alerts sharing a source IP within 30 minutes of its last alert. Its timeline shows linked raw events. This correlation is intentionally narrow and assumes ordered input.
+Threshold and window are parameters of `BruteForceDetector` (CLI defaults: five and 60 seconds). Alert evidence references the relevant stored event IDs. Incidents correlate alerts from the same IP **and host** if a subsequent alert arrives within 30 minutes. Input is expected in chronological order. The risk score is a **heuristic priority, not a probability**: base 55 for AUTH-001, 80 for AUTH-002, 45 for WEB-001, 50 for NET-001; an IOC match adds 15 once. Incident priority is the highest linked alert score plus five if AUTH-002 is present, capped at 100.
 
-`intel.py` reads `data/demo_iocs.json` and caches lookups in memory. `192.0.2.23` is a reserved **TEST-NET** address with a fabricated training record. A `match` means a match in that simulated fixture, **not** a live reputation finding. `not_found`, `invalid`, and `unavailable` are distinct outcomes. No data leaves the machine. The local indicator context is stored with each event and alert. Live AbuseIPDB/VirusTotal calls were deferred: API credentials, quotas, privacy decisions, and error semantics would add risk within the interview deadline.
+## Threat intelligence
 
-Risk is a **heuristic priority score, not a probability**. Bases: authentication burst 55, success after failures 80, web pattern 45, port attempts 50. A local IOC match adds 15 once to the alert score, capped at 100. Incident score is the maximum linked alert score plus five for a related success alert, capped at 100. A local IOC match enriches detections; it does not generate an independent alert. No decay or statistical calibration is claimed.
+The default `SIEM_INTEL_PROVIDER=local` loads `data/demo_iocs.json`. Its reserved TEST-NET address `192.0.2.23` has a **fabricated training record**, never a real-world malicious verdict. The local lookup distinguishes `match`, `not_found`, `invalid`, and `unavailable` and records lookup time.
+
+Optional AbuseIPDB APIv2 support is **off by default**. Set `SIEM_INTEL_PROVIDER=abuseipdb` and `ABUSEIPDB_API_KEY` in your environment (the `.env.example` file is documentation, not auto-loaded). A local fixture match takes precedence. Only globally routable public IP addresses without local matches are sent to `https://api.abuseipdb.com/api/v2/check` using the `ipAddress` and `maxAgeInDays=90` parameters; the IP address leaves your machine. The provider returns `match` for an abuse confidence score of at least 75, `reported` for lower nonzero reports, `not_found` for zero reports, and `error` for request/response failures. This threshold is our triage choice, not a provider guarantee. It uses a three-second timeout, a 15-minute in-memory cache, and a 100-request per-process budget. API failures never mean benign. No key or external service is needed for tests or the demo. The live path is mocked in tests; it has not been verified with a real API key. See [official APIv2 documentation](https://docs.abuseipdb.com/) for provider behavior and account-specific quotas.
 
 ## API and analyst workflow
 
-- `GET /api/overview`: persisted event, alert, incident, open incident, and matching-event counts.
-- `GET /api/events?ip=192.0.2.23`: recent events, optionally filtered by exact IP.
-- `GET /api/alerts`, `GET /api/incidents`, `GET /api/incidents/<id>`: alerts, incident list, linked evidence and timeline.
-- `PATCH /api/incidents/<id>` with `{"status":"investigating"}`: persist `new`, `investigating`, `resolved`, or `false_positive`; invalid input returns 400.
+- `GET /api/overview`: counts from stored data.
+- `GET /api/events?ip=...&type=...&username=...&host=...&source=...&path=...&destination_ip=...&destination_port=...&http_status=...&connection_outcome=...`: recent exact-match filters except `path`, which is a literal substring; up to 100 by default. The dashboard exposes the common IP, type, username, host, source, path and port filters.
+- `GET /api/alerts`, `GET /api/incidents`, `GET /api/incidents/<id>`: alerts, linked evidence, timeline, and status audit.
+- `PATCH /api/incidents/<id>` with `{"status":"investigating"}`: permitted statuses `new`, `investigating`, `resolved`, `false_positive`. Changes are recorded in `incident_actions`.
 
-In the console, open incident #1: the five failures trigger AUTH-001; the success triggers AUTH-002; both link to the same incident and six source events. Review the local IOC label and risk explanation, then set status to Investigating. Incident #2 contains the web pattern; the benign web request produces no alert. Show `src/detectors.py` to explain the actual threshold/window logic.
+The API and UI bind to `127.0.0.1`. Optionally set `SIEM_API_TOKEN` before starting the server. Then **all `/api/` requests** need `Authorization: Bearer <token>`; enter the token into the dashboard's Connect field for this browser session. The token stays in page memory, not local storage. Writes are limited to 20 per minute per remote address; security headers and a same-origin CSP are set. These are local safeguards, not a multi-user authentication system. Do not expose the development server to an untrusted network or load sensitive production logs.
 
-## Security and limits
+## Limits and next work
 
-The server binds to localhost and has **no authentication**, so do not expose it publicly or ingest sensitive production logs. Status changes have no analyst audit trail. The parser supports a narrow SSH syslog subset and specified JSON event types. File tailing handles truncation of the same file, not rotation/restart offsets. Rule state and IOC cache are process-local; restarting mid-window loses detection history. No provider API, real reputation verdict, verified attack outcome, web response codes, automated containment, or production-scale ingest is implemented. The demo timestamps are fixed; these are historical training events. Before production: identity and access control, bounded input/ingest rate, durable offsets and window state, schema migrations, audit logs, secret management for any opt-in provider, provider timeouts and quotas, and operational monitoring.
+Recovery replays all stored events, which is expensive for large datasets. A crash between persisting an event and storing its resulting alert can leave a detection gap; event, alert and checkpoint writes are not one atomic transaction. An identical line rewritten at the same offset of the same inode may be deduplicated. Rotated files must be discoverable at the watched path. The local API token identifies one shared analyst and is optional; there are no roles, TLS, production WSGI deployment, or analyst notes. Web-path patterns and HTTP response codes cannot verify exploitation. Network records do not show endpoint behavior. No autonomous response actions are implemented. Before production, add transactional ingest, versioned migrations, bounded state recovery, stronger identity, operational monitoring, and measured performance tests.
 
-See [interview notes](docs/interview.md) for a timed walkthrough and difficult questions.
+See [interview notes](docs/interview.md) for the exact walkthrough and defensible answers.
