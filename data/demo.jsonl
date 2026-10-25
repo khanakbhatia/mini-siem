@@ -5,5 +5,10 @@
 {"timestamp":"2026-10-24T09:00:13Z","type":"auth_fail","ip":"192.0.2.23","username":"admin","host":"demo-host","source":"demo-auth","simulated":true}
 {"timestamp":"2026-10-24T09:00:17Z","type":"auth_fail","ip":"192.0.2.23","username":"admin","host":"demo-host","source":"demo-auth","simulated":true}
 {"timestamp":"2026-10-24T09:00:22Z","type":"auth_success","ip":"192.0.2.23","username":"admin","host":"demo-host","source":"demo-auth","simulated":true}
-{"timestamp":"2026-10-24T09:01:00Z","type":"web_request","ip":"198.51.100.30","path":"/products?id=1%20UNION%20SELECT%20password","source":"demo-web","simulated":true}
-{"timestamp":"2026-10-24T09:02:00Z","type":"web_request","ip":"198.51.100.30","path":"/products?id=1","source":"demo-web","simulated":true}
+{"timestamp":"2026-10-24T09:01:00Z","type":"web_request","ip":"198.51.100.30","path":"/products?id=1%20UNION%20SELECT%20password","source":"demo-web","simulated":true,"http_status":500}
+{"timestamp":"2026-10-24T09:02:00Z","type":"web_request","ip":"198.51.100.30","path":"/products?id=1","source":"demo-web","simulated":true,"http_status":200}
+{"timestamp":"2026-10-24T09:03:00Z","type":"network_connection","ip":"198.51.100.44","destination_ip":"198.51.100.80","destination_port":21,"connection_outcome":"rejected","source":"demo-firewall","simulated":true}
+{"timestamp":"2026-10-24T09:03:05Z","type":"network_connection","ip":"198.51.100.44","destination_ip":"198.51.100.80","destination_port":22,"connection_outcome":"rejected","source":"demo-firewall","simulated":true}
+{"timestamp":"2026-10-24T09:03:10Z","type":"network_connection","ip":"198.51.100.44","destination_ip":"198.51.100.80","destination_port":23,"connection_outcome":"rejected","source":"demo-firewall","simulated":true}
+{"timestamp":"2026-10-24T09:03:15Z","type":"network_connection","ip":"198.51.100.44","destination_ip":"198.51.100.80","destination_port":80,"connection_outcome":"rejected","source":"demo-firewall","simulated":true}
+{"timestamp":"2026-10-24T09:03:20Z","type":"network_connection","ip":"198.51.100.44","destination_ip":"198.51.100.80","destination_port":443,"connection_outcome":"rejected","source":"demo-firewall","simulated":true}

@@ -77,11 +77,22 @@ def parse_line(line, year=None):
         port = obj.get("destination_port")
         if port is not None and (isinstance(port, bool) or not isinstance(port, int) or not 1 <= port <= 65535):
             return None
+        target = obj.get("destination_ip")
+        if target is not None:
+            target = str(ipaddress.ip_address(target))
+        http_status = obj.get("http_status")
+        if http_status is not None and (isinstance(http_status, bool) or not isinstance(http_status, int) or not 100 <= http_status <= 599):
+            return None
+        outcome = obj.get("connection_outcome")
+        if outcome is not None and outcome not in ("attempted", "accepted", "rejected"):
+            return None
         return {"timestamp": timestamp.astimezone(timezone.utc), "type": obj["type"],
                 "ip": ip, "username": str(obj.get("username") or "")[:128] or None,
                 "host": str(obj.get("host") or "")[:128] or None,
                 "process": None, "msg": str(obj.get("path") or "")[:2048],
-                "destination_port": port, "source": str(obj.get("source") or "json")[:64],
+                "destination_port": port, "destination_ip": target,
+                "http_status": http_status, "connection_outcome": outcome,
+                "source": str(obj.get("source") or "json")[:64],
                 "raw_event": raw, "simulated": obj.get("simulated") is True}
     except (ValueError, TypeError, KeyError, OverflowError):
         return None
